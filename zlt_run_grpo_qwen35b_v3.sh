@@ -90,7 +90,7 @@ echo "BASE_PATH resolved to: ${BASE_PATH}"
 
 DATA_DIR=${DATA_DIR:-"${BASE_PATH}/HPT_data"}
 # TRAIN_FILE=${TRAIN_FILE:-"${DATA_DIR}/openr1.1024.4096.sample.parquet"}
-TRAIN_FILE=${TRAIN_FILE:-"${BASE_PATH}/xyi_data/xyi_2_16.parquet"} # xyi.parquet # math_problem_no_length_overflow
+TRAIN_FILE=${TRAIN_FILE:-"${BASE_PATH}/xyi_data/xyi_2_16_1013.parquet"} # xyi.parquet # math_problem_no_length_overflow
 
 TEST_FILE=${TEST_FILE:-["${DATA_DIR}/AIME24/test.parquet","${DATA_DIR}/AMC23/test.parquet"]}
 # TEST_FILE=${TEST_FILE:-["${DATA_DIR}/MATH-500/test.parquet"]}
@@ -160,6 +160,9 @@ DEFAULT_LOCAL_DIR=${DEFAULT_LOCAL_DIR:-${BASE_PATH}/ckpt/${PROJECT_NAME}/}
 
 LOG_PATH=${LOG_PATH:-${BASE_PATH}/log/${PROJECT_NAME}/}
 echo "LOG_PATH resolved to: ${LOG_PATH}"
+
+ROLLOUT_DATA_DIR=${ROLLOUT_DATA_DIR:-${BASE_PATH}/rollout/${PROJECT_NAME}/}
+echo "ROLLOUT_DATA_DIR resolved to: ${ROLLOUT_DATA_DIR}"
 
 # ulyess_sequence_len
 TOTAL_EPOCHS=${TOTAL_EPOCHS:-1}
@@ -231,7 +234,7 @@ if [ "${NODE_RANK}" = "0" ]; then
             echo "Ray cluster ready: ${device_count} nodes"
             ray status
 
-            mkdir -p ${LOG_PATH}
+            mkdir -p "${LOG_PATH}" "${ROLLOUT_DATA_DIR}"
 
             python3 -m verl.trainer.main_ppo \
                 algorithm.adv_estimator=grpo \
@@ -301,11 +304,11 @@ if [ "${NODE_RANK}" = "0" ]; then
                 actor_rollout_ref.rollout.enable_chunked_prefill=False \
                 actor_rollout_ref.rollout.free_cache_engine=True \
                 actor_rollout_ref.rollout.checkpoint_engine.update_weights_bucket_megabytes=4096 \
-                reward.custom_reward_function.path="verl/experimental/hpt/reward.py" \
+                reward.custom_reward_function.path="pkg://verl.experimental.hpt.reward" \
                 reward.custom_reward_function.name=compute_score \
                 reward.reward_manager.source=importlib \
                 reward.reward_manager.name=LegacyHPTRewardManager \
-                reward.reward_manager.module.path="verl/experimental/hpt/reward_manager.py" \
+                reward.reward_manager.module.path="pkg://verl.experimental.hpt.reward_manager_origin" \
                 trainer.balance_batch=True \
                 trainer.logger='["console","tensorboard"]' \
                 trainer.project_name=${PROJECT_NAME} \
@@ -314,6 +317,7 @@ if [ "${NODE_RANK}" = "0" ]; then
                 trainer.nnodes=${TRAINER_NNODES} \
                 trainer.device=npu \
                 trainer.default_local_dir=${DEFAULT_LOCAL_DIR} \
+                trainer.rollout_data_dir="${ROLLOUT_DATA_DIR}" \
                 trainer.val_before_train=False \
                 trainer.save_freq=${SAVE_FREQ} \
                 trainer.test_freq=${VAL_FREQ} \

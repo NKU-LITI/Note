@@ -92,9 +92,9 @@ echo "BASE_PATH resolved to: ${BASE_PATH}"
 DATA_DIR=${DATA_DIR:-"${BASE_PATH}/HPT_data"}
 # TRAIN_FILE=${TRAIN_FILE:-"${DATA_DIR}/openr1.1024.4096.sample.parquet"}
 # TRAIN_FILE=${TRAIN_FILE:-"${BASE_PATH}/xyi_data/math_problem_no_length_overflow.parquet"} # xyi.parquet
-TRAIN_FILE=${TRAIN_FILE:-"${BASE_PATH}/xyi_data/xyi_2_16.parquet"} # xyi.parquet # math_problem_no_length_overflow
+TRAIN_FILE=${TRAIN_FILE:-"${BASE_PATH}/xyi_data/xyi_2_16_1013.parquet"} # xyi.parquet # math_problem_no_length_overflow
 
-TEST_FILE=${TEST_FILE:-["${DATA_DIR}/AIME24/test.parquet","${DATA_DIR}/AMC23/test.parquet","${DATA_DIR}/MATH-500/test.parquet"]}
+TEST_FILE=${TEST_FILE:-["${DATA_DIR}/AIME24/test.parquet","${DATA_DIR}/AMC23/test.parquet"]}
 
 pip install "accelerate>=1.6.0" -i https://pypi.tuna.tsinghua.edu.cn/simple
 python -c "import accelerate; print(accelerate.__version__)"
@@ -141,7 +141,7 @@ TRAINER_NNODES=${TRAINER_NNODES:-$NNODES}
 
 # TRAIN_BATCH_SIZE 和 PPO_MINI_BATCH_SIZE设置成卡数
 # train_batch_size * 卡数 得是 mini_batch_size的整数倍
-TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-96}
+TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-192}
 PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-6}
 MAX_PROMPT_LENGTH=${MAX_PROMPT_LENGTH:-1024}
 MAX_RESPONSE_LENGTH=${MAX_RESPONSE_LENGTH:-8192} 
@@ -152,8 +152,8 @@ PPO_EPOCHS=${PPO_EPOCHS:-1}
 CLIP_RATIO=${CLIP_RATIO:-0.2}
 GRAD_CLIP=${GRAD_CLIP:-1.0}
 
-ROLLOUT_TP=${ROLLOUT_TP:-8}
-ROLLOUT_GPU_MEM_UTIL=${ROLLOUT_GPU_MEM_UTIL:-0.45}
+ROLLOUT_TP=${ROLLOUT_TP:-4}
+ROLLOUT_GPU_MEM_UTIL=${ROLLOUT_GPU_MEM_UTIL:-0.55}
 ROLLOUT_N=${ROLLOUT_N:-8}
 ROLLOUT_TEMPERATURE=${ROLLOUT_TEMPERATURE:-1.0}
 ROLLOUT_TOP_P=${ROLLOUT_TOP_P:-0.99}
@@ -163,9 +163,12 @@ DEFAULT_LOCAL_DIR=${DEFAULT_LOCAL_DIR:-${BASE_PATH}/ckpt/${PROJECT_NAME}/}
 LOG_PATH=${LOG_PATH:-${BASE_PATH}/log/${PROJECT_NAME}/}
 echo "LOG_PATH resolved to: ${LOG_PATH}"
 
+ROLLOUT_DATA_DIR=${ROLLOUT_DATA_DIR:-${BASE_PATH}/rollout/${PROJECT_NAME}/}
+echo "ROLLOUT_DATA_DIR resolved to: ${ROLLOUT_DATA_DIR}"
+
 TOTAL_EPOCHS=${TOTAL_EPOCHS:-1}
-SAVE_FREQ=${SAVE_FREQ:-10}
-VAL_FREQ=${VAL_FREQ:-20}
+SAVE_FREQ=${SAVE_FREQ:-5}
+VAL_FREQ=${VAL_FREQ:-10}
 
 MAX_MODEL_LEN=${MAX_MODEL_LEN:-12888}
 
@@ -242,7 +245,7 @@ if [ "${NODE_RANK}" = "0" ]; then
             echo "Ray cluster ready: ${device_count} nodes"
             ray status
 
-            mkdir -p ${LOG_PATH}
+            mkdir -p "${LOG_PATH}" "${ROLLOUT_DATA_DIR}"
 
             python3 -m verl.trainer.main_ppo \
                 algorithm.adv_estimator=grpo \
@@ -279,7 +282,6 @@ if [ "${NODE_RANK}" = "0" ]; then
                 actor_rollout_ref.actor.kl_loss_coef=0.01 \
                 actor_rollout_ref.actor.kl_loss_type=low_var_kl \
                 actor_rollout_ref.actor.entropy_coeff=0 \
-                actor_rollout_ref.actor.entropy_from_logits_with_chunking=True \
                 actor_rollout_ref.actor.calculate_entropy=False \
                 actor_rollout_ref.actor.policy_loss.loss_mode=grpo_compat \
                 actor_rollout_ref.actor.policy_loss.loss_remove_token_mean=True \
@@ -300,7 +302,7 @@ if [ "${NODE_RANK}" = "0" ]; then
                 actor_rollout_ref.rollout.n=${ROLLOUT_N} \
                 actor_rollout_ref.rollout.temperature=${ROLLOUT_TEMPERATURE} \
                 actor_rollout_ref.rollout.top_p=${ROLLOUT_TOP_P} \
-                actor_rollout_ref.rollout.val_kwargs.n=8 \
+                actor_rollout_ref.rollout.val_kwargs.n=1 \
                 actor_rollout_ref.rollout.val_kwargs.do_sample=True \
                 actor_rollout_ref.rollout.val_kwargs.temperature=0.6 \
                 actor_rollout_ref.rollout.val_kwargs.top_p=0.95 \
@@ -313,11 +315,11 @@ if [ "${NODE_RANK}" = "0" ]; then
                 actor_rollout_ref.rollout.enable_chunked_prefill=False \
                 actor_rollout_ref.rollout.free_cache_engine=True \
                 actor_rollout_ref.rollout.checkpoint_engine.update_weights_bucket_megabytes=4096 \
-                reward.custom_reward_function.path="verl/experimental/hpt/reward.py" \
+                reward.custom_reward_function.path="pkg://verl.experimental.hpt.reward" \
                 reward.custom_reward_function.name=compute_score \
                 reward.reward_manager.source=importlib \
                 reward.reward_manager.name=LegacyHPTRewardManager \
-                reward.reward_manager.module.path="verl/experimental/hpt/reward_manager.py" \
+                reward.reward_manager.module.path="pkg://verl.experimental.hpt.reward_manager_origin" \
                 +hpt.enabled=True \
                 +hpt.strategy="$UNIFY_STRATEGY" \
                 +hpt.switch_gate=$SWITCH_GATE \
@@ -334,6 +336,7 @@ if [ "${NODE_RANK}" = "0" ]; then
                 trainer.nnodes=${TRAINER_NNODES} \
                 trainer.device=npu \
                 trainer.default_local_dir=${DEFAULT_LOCAL_DIR} \
+                trainer.rollout_data_dir="${ROLLOUT_DATA_DIR}" \
                 trainer.val_before_train=False \
                 trainer.save_freq=${SAVE_FREQ} \
                 trainer.test_freq=${VAL_FREQ} \
